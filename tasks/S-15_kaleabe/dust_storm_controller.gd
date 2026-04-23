@@ -1,174 +1,282 @@
+# ============================================================
+# ARTIST: Kaleab Nigussie (S-15)
+# TASK: Realistic Savannah Dust Storm (FINAL)
+# BASE: Node - Pure logic management
+# FEATURES: Wind-blown, tiny grains, natural turbulence
+# ============================================================
+
 extends Node
 
-# SDD UC-L2-12: Boss Event - Dust Storm Ambush
-# Trigger: 90% progress reached
-# Visibility: 20% during storm
-# Duration: Until 3 lions are eliminated
+# Signals for integration
+signal storm_active
+signal storm_inactive
 
-@onready var canvas_modulate = get_node("../CanvasModulate")
-@onready var dust_particles = get_node("../DustParticles")
-@onready var dust_particles2 = get_node_or_null("../DustParticles2")
-@onready var dust_particles3 = get_node_or_null("../DustParticles3")
-@onready var dust_particles4 = get_node_or_null("../DustParticles4")
-@onready var dust_particles5 = get_node_or_null("../DustParticles5")
+# Colors from Level 2 Brief
+const DUST_MAIN = Color(0.65, 0.50, 0.35, 0.7)   # Dusty brown
+const DUST_LIGHT = Color(0.85, 0.75, 0.55, 0.5)  # Sun-lit sand
+const DUST_DARK = Color(0.55, 0.40, 0.25, 0.4)   # Shadow sand
 
-var is_storm_active: bool = false
-var storm_intensity: float = 0.0
-var boss_event_active: bool = false
+var particles: GPUParticles2D
+var canvas: CanvasModulate
+var is_active: bool = false
 
-signal storm_active(is_active: bool)
-signal boss_ambush_started()
-signal boss_ambush_ended()
+# Wind variation variables
+var wind_timer: float = 0.0
+
+# ============================================================
+# INITIALIZATION
+# ============================================================
 
 func _ready():
-	print("========================================")
-	print("S-15: DUST STORM SYSTEM (SDD UC-L2-12)")
-	print("Boss Event: Dust Storm Ambush")
-	print("Visibility during storm: 20%")
-	print("========================================")
+	print("╔══════════════════════════════════════════════════════╗")
+	print("║  S-15: REALISTIC SAVANNAH DUST STORM                ║")
+	print("║  Base: Node | Wind-blown particles | Tiny dust      ║")
+	print("╚══════════════════════════════════════════════════════╝")
 	
-	if canvas_modulate:
-		canvas_modulate.visible = false
+	# Setup atmospheric haze
+	_setup_canvas()
 	
-	var dust_texture = create_yellowish_dust_texture()
+	# Setup particle system
+	_setup_particles()
 	
-	create_dust_emitter("DustParticles", 600, -250, dust_texture)
-	create_dust_emitter("DustParticles2", 600, -125, dust_texture)
-	create_dust_emitter("DustParticles3", 600, 0, dust_texture)
-	create_dust_emitter("DustParticles4", 600, 125, dust_texture)
-	create_dust_emitter("DustParticles5", 600, 250, dust_texture)
-	
-	print("✓ 5 dust emitters ready for boss ambush")
+	# Auto-test sequence (remove for production)
+	_auto_test()
 
-# SDD UC-L2-12: Called when 90% progress reached
-func trigger_boss_ambush():
-	print("")
-	print("========================================")
-	print("🔥 SDD UC-L2-12: BOSS EVENT TRIGGERED! 🔥")
-	print("90% Progress Reached - Dust Storm Ambush!")
-	print("========================================")
-	
-	boss_event_active = true
-	activate_storm(0.9)  # Full intensity
-	
-	# Emit signal that boss ambush started (for other systems)
-	emit_signal("boss_ambush_started")
-	print("✓ 3 lions will spawn (North, East, West)")
+# ============================================================
+# SETUP METHODS
+# ============================================================
 
-# SDD UC-L2-12: Called when all 3 lions are eliminated
-func end_boss_ambush():
-	print("")
-	print("========================================")
-	print("🏆 SDD UC-L2-12: BOSS EVENT COMPLETE! 🏆")
-	print("All 3 lions eliminated - Dust storm clearing")
-	print("========================================")
-	
-	deactivate_storm()
-	boss_event_active = false
-	emit_signal("boss_ambush_ended")
+func _setup_canvas():
+	"""Create the brown haze atmosphere"""
+	canvas = CanvasModulate.new()
+	canvas.name = "CanvasModulate"
+	add_child(canvas)
+	canvas.visible = false
+	canvas.color = Color(0.55, 0.45, 0.35, 0.5)
+	print("✓ Atmospheric haze ready")
 
-func create_yellowish_dust_texture():
-	"""Create soft, yellowish/brown dust particle texture"""
-	var image = Image.create(8, 8, false, Image.FORMAT_RGBA8)
+func _setup_particles():
+	"""Create and configure the particle system"""
+	particles = GPUParticles2D.new()
+	particles.name = "DustParticles"
+	add_child(particles)
+	
+	# Create soft dust texture (not blocky!)
+	_create_soft_texture()
+	
+	# Configure particle system
+	particles.amount = 3500
+	particles.lifetime = 4.5
+	particles.preprocess = 1.5
+	particles.explosiveness = 0.0
+	particles.randomness = 0.95
+	particles.one_shot = false
+	particles.fixed_fps = 30
+	
+	# Position off-screen left (sweeps across)
+	particles.position = Vector2(-150, 300)
+	
+	# Create movement material
+	_create_movement_material()
+	
+	print("✓ Particle system configured")
+	print("  - 3500 dust grains")
+	print("  - Wind speed: 80-200 px/sec")
+	print("  - Sweeps from left to right")
+
+func _create_soft_texture():
+	"""Create a soft, round dust grain (not blocky)"""
+	var size = 8
+	var image = Image.create(size, size, false, Image.FORMAT_RGBA8)
 	image.fill(Color.TRANSPARENT)
 	
-	var dust_colors = [
-		Color(0.95, 0.85, 0.65, 1.0),
-		Color(0.85, 0.75, 0.55, 1.0),
-		Color(0.75, 0.65, 0.45, 1.0),
-	]
+	var center = Vector2(size/2, size/2)
 	
-	var center = Vector2(4, 4)
-	for x in range(8):
-		for y in range(8):
+	for x in range(size):
+		for y in range(size):
 			var distance = center.distance_to(Vector2(x, y))
 			if distance < 3.5:
-				var alpha = 1.0 - (distance / 3.5)
-				alpha = alpha * alpha * 0.8
-				var color = dust_colors[randi() % dust_colors.size()]
-				color.a = alpha
-				image.set_pixel(x, y, color)
+				# Soft falloff for natural look
+				var softness = 1.0 - (distance / 3.5)
+				softness = softness * softness
+				var alpha = softness * 0.8
+				image.set_pixel(x, y, Color(1.0, 1.0, 1.0, alpha))
 	
-	return ImageTexture.create_from_image(image)
+	particles.texture = ImageTexture.create_from_image(image)
 
-func create_dust_emitter(name, pos_x, pos_y, texture):
-	var emitter = get_node_or_null("../" + name)
+func _create_movement_material():
+	"""Create particle material with wind and turbulence"""
+	var mat = ParticleProcessMaterial.new()
 	
-	if not emitter:
-		emitter = GPUParticles2D.new()
-		emitter.name = name
-		get_parent().add_child(emitter)
+	# ===== EMISSION SHAPE =====
+	# Use a tall box to create a wall of dust off-screen left
+	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	mat.emission_box_extents = Vector3(30, 400, 30)
 	
-	emitter.position = Vector2(pos_x, pos_y)
-	emitter.texture = texture
-	emitter.emitting = false
-	emitter.amount = 600
-	emitter.lifetime = 2.5
-	emitter.one_shot = false
-	emitter.explosiveness = 0.0
-	emitter.randomness = 0.9
-	emitter.fixed_fps = 30
+	# ===== WIND DIRECTION =====
+	# Sweep from left to right with slight upward angle
+	mat.direction = Vector3(0.95, -0.1, 0)
+	mat.spread = 8.0  # Narrow for focused sweep
+	mat.flatness = 0.9
 	
-	var material = ParticleProcessMaterial.new()
-	material.direction = Vector3(0, -1, 0)
-	material.spread = 180.0
-	material.flatness = 0.5
-	material.gravity = Vector3(0, 5, 0)
-	material.initial_velocity_min = 10.0
-	material.initial_velocity_max = 40.0
-	material.angular_velocity_min = -20.0
-	material.angular_velocity_max = 20.0
-	material.scale_min = 0.08
-	material.scale_max = 0.15
+	# ===== VELOCITY (Wind speed) =====
+	mat.initial_velocity_min = 80.0
+	mat.initial_velocity_max = 180.0
 	
+	# ===== GRAVITY =====
+	# Slight downward pull (realistic sand)
+	mat.gravity = Vector3(0, 15, 0)
+	
+	# ===== TURBULENCE (Natural swirl) =====
+	mat.turbulence_enabled = true
+	mat.turbulence_noise_strength = 2.5
+	mat.turbulence_influence_min = 0.15
+	mat.turbulence_influence_max = 0.35
+	
+	# ===== ROTATION =====
+	mat.angular_velocity_min = -15.0
+	mat.angular_velocity_max = 15.0
+	
+	# ===== SIZE (Tiny dust grains!) =====
+	# Note: scale_randomness doesn't exist in Godot 4, removed
+	mat.scale_min = 0.025
+	mat.scale_max = 0.07
+	
+	# ===== COLOR RAMP (Fade in/out with color) =====
 	var gradient = Gradient.new()
-	gradient.set_color(0, Color(0.95, 0.85, 0.65, 0.9))
-	gradient.set_color(0.5, Color(0.85, 0.75, 0.55, 0.5))
-	gradient.set_color(1.0, Color(0.75, 0.65, 0.45, 0.0))
+	gradient.add_point(0.0, Color(0, 0, 0, 0))           # Fade in
+	gradient.add_point(0.15, DUST_MAIN)                  # Dusty brown
+	gradient.add_point(0.4, DUST_LIGHT)                  # Sun-lit tan
+	gradient.add_point(0.7, DUST_DARK)                   # Shadow sand
+	gradient.add_point(0.9, Color(0.5, 0.35, 0.2, 0.2))  # Fading
+	gradient.add_point(1.0, Color(0, 0, 0, 0))           # Fade out
 	
-	var color_ramp = GradientTexture1D.new()
-	color_ramp.gradient = gradient
-	material.color_ramp = color_ramp
+	var ramp = GradientTexture1D.new()
+	ramp.gradient = gradient
+	mat.color_ramp = ramp
 	
-	emitter.process_material = material
+	particles.process_material = mat
 
-func activate_storm(intensity: float = 0.9):
-	print("🌪️ DUST STORM ACTIVATED (SDD UC-L2-12)")
+# ============================================================
+# WIND VARIATION (Dynamic wind changes)
+# ============================================================
+
+func _process(delta):
+	if not is_active:
+		return
 	
-	is_storm_active = true
-	storm_intensity = clamp(intensity, 0.5, 1.0)
+	wind_timer += delta
+	if wind_timer > 3.0:  # Change wind every 3 seconds
+		wind_timer = 0
+		_vary_wind()
+
+func _vary_wind():
+	"""Randomly adjust wind for natural variation"""
+	var mat = particles.process_material
+	if not mat:
+		return
 	
-	if canvas_modulate:
-		canvas_modulate.visible = true
-		# SDD UC-L2-12: Visibility set to 20%
-		canvas_modulate.color = Color(0.75, 0.62, 0.48, 0.2)
-		print("✓ Screen visibility reduced to 20% per SDD")
+	# Slight random variation in wind speed
+	var variation = randf_range(-30, 40)
+	var new_min = clamp(mat.initial_velocity_min + variation, 60, 150)
+	var new_max = clamp(mat.initial_velocity_max + variation, 120, 250)
 	
-	var emitters = ["DustParticles", "DustParticles2", "DustParticles3", "DustParticles4", "DustParticles5"]
+	mat.initial_velocity_min = new_min
+	mat.initial_velocity_max = new_max
 	
-	for name in emitters:
-		var emitter = get_node_or_null("../" + name)
-		if emitter:
-			emitter.emitting = true
-			emitter.amount = int(600 * storm_intensity)
-			emitter.restart()
+	# Slight direction variation
+	var dir_x = clamp(0.95 + randf_range(-0.05, 0.03), 0.85, 1.0)
+	mat.direction = Vector3(dir_x, -0.1, 0)
 	
-	emit_signal("storm_active", true)
+	print("  💨 Wind shifted: ", int(new_min), "-", int(new_max), " px/sec")
+
+# ============================================================
+# STORM CONTROL
+# ============================================================
+
+func activate_storm():
+	"""Start the dust storm"""
+	if is_active:
+		return
+	
+	is_active = true
+	
+	# Activate haze
+	canvas.visible = true
+	
+	# Fade in canvas
+	var tween = create_tween()
+	tween.tween_property(canvas, "color:a", 0.5, 1.0)
+	
+	# Start particles
+	particles.emitting = true
+	
+	emit_signal("storm_active")
+	print("🌪️ DUST STORM ACTIVATED")
+	print("   Wind sweeping left → right")
+	print("   Particles should be TINY brown grains")
 
 func deactivate_storm():
-	print("🌤️ DUST STORM CLEARING")
+	"""Stop the dust storm"""
+	if not is_active:
+		return
 	
-	is_storm_active = false
-	storm_intensity = 0.0
+	is_active = false
 	
-	if canvas_modulate:
-		canvas_modulate.visible = false
+	# Fade out haze
+	var tween = create_tween()
+	tween.tween_property(canvas, "color:a", 0.0, 1.0)
+	tween.tween_callback(func(): canvas.visible = false)
 	
-	var emitters = ["DustParticles", "DustParticles2", "DustParticles3", "DustParticles4", "DustParticles5"]
+	# Stop particles
+	particles.emitting = false
 	
-	for name in emitters:
-		var emitter = get_node_or_null("../" + name)
-		if emitter:
-			emitter.emitting = false
+	emit_signal("storm_inactive")
+	print("🌤️ DUST STORM DEACTIVATED")
+
+# ============================================================
+# AUTO TEST (For verification)
+# ============================================================
+
+func _auto_test():
+	print("")
+	print(">>> AUTO-TEST STARTING IN 2 SECONDS...")
+	await get_tree().create_timer(2.0).timeout
 	
-	emit_signal("storm_active", false)
+	activate_storm()
+	
+	# Let storm run for 6 seconds
+	await get_tree().create_timer(6.0).timeout
+	
+	deactivate_storm()
+	
+	print("")
+	print("╔══════════════════════════════════════════════════════╗")
+	print("║  TEST COMPLETE                                        ║")
+	print("║  If you saw:                                         ║")
+	print("║  - Brown haze over screen                            ║")
+	print("║  - Tiny dust grains sweeping left → right            ║")
+	print("║  - Natural wind variation                            ║")
+	print("║  → YOUR DUST STORM IS WORKING!                       ║")
+	print("╚══════════════════════════════════════════════════════╝")
+
+# ============================================================
+# PUBLIC API (For integration)
+# ============================================================
+
+func set_intensity(value: float):
+	"""Adjust storm intensity (0.0 to 1.0)"""
+	if not is_active:
+		return
+	
+	var intensity = clamp(value, 0.2, 1.0)
+	particles.amount = int(3500 * intensity)
+	canvas.color.a = 0.3 + (intensity * 0.3)
+
+func get_status() -> Dictionary:
+	"""Return current storm status"""
+	return {
+		"active": is_active,
+		"particle_count": particles.amount if particles else 0,
+		"emitting": particles.emitting if particles else false
+	}
